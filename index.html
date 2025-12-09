@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clash Converter</title>
+<style>
+body {
+  margin:0;
+  padding:20px;
+  font-family: Arial, sans-serif;
+  background: #121212;
+  color: #fff;
+  display: flex;
+  justify-content: center;
+}
+body.light { background:#f2f2f2; color:#222; }
+.container {
+  width: 95%;
+  max-width: 700px;
+  background: rgba(255,255,255,0.05);
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0 8px 25px rgba(0,0,0,0.4);
+  transition:0.3s;
+}
+body.light .container { background:#fff; box-shadow:0 4px 15px rgba(0,0,0,0.1); }
+h2 { text-align:center; margin-bottom:15px; font-size:20px; }
+textarea {
+  width:100%;
+  padding:12px;
+  border-radius:8px;
+  border:none;
+  margin-top:10px;
+  font-size:16px;
+  background: rgba(0,0,0,0.3);
+  color:#fff;
+  resize:none;
+  box-sizing:border-box;
+  transition:0.2s;
+}
+body.light textarea { background:#f0f0f0; color:#222; }
+button {
+  padding:12px;
+  border-radius:8px;
+  border:none;
+  cursor:pointer;
+  font-size:16px;
+  font-weight:600;
+  transition:0.2s;
+}
+button:hover { opacity:0.85; }
+.row-btn { display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; }
+.row-btn button { flex:1; }
+#toggleDark {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background: #333;
+  color:#fff;
+  border-radius:20px;
+  padding:8px 15px;
+  border:none;
+  cursor:pointer;
+  z-index:999;
+}
+#toggleDark:hover {opacity:0.8;}
+</style>
+</head>
+<body>
+
+<button id="toggleDark">Light/Dark</button>
+
+<div class="container">
+  <h2>Clash Converter</h2>
+
+  <label>Input:</label>
+  <textarea id="input" placeholder="vless://... or vmess://... or trojan://..." rows="8"></textarea>
+
+  <button onclick="convert()">Convert</button>
+
+  <label>Clash Output:</label>
+  <textarea id="output" readonly placeholder="Klik convert dulu bg" rows="10"></textarea>
+
+  <div class="row-btn">
+    <button onclick="copyOutput()">Copy</button>
+    <button onclick="clearAll()">Clear</button>
+    <button onclick="downloadOutput()">Download</button>
+  </div>
+</div>
+
+<script>
+// Dark mode toggle
+document.getElementById("toggleDark").onclick = () => { document.body.classList.toggle("light"); };
+
+// Auto-resize textarea
+function autoResize(el){ el.style.height='auto'; el.style.height=(el.scrollHeight)+'px'; }
+document.getElementById("input").addEventListener('input', e=>autoResize(e.target));
+document.getElementById("output").addEventListener('input', e=>autoResize(e.target));
+
+// Clear
+function clearAll(){ document.getElementById("input").value=''; document.getElementById("output").value=''; }
+
+// --- Parser ---
+function parseV2Ray(url){
+  try{
+    if(url.startsWith("vless://")){
+      const [_,rest]=url.split("vless://");
+      const [uuid, after]=rest.split("@");
+      const [server, tail]=after.split(":");
+      const [port, paramsAndName]=tail.split("?");
+      const [params, name]=paramsAndName.split("#");
+      const sp=new URLSearchParams(params);
+      return {type:"vless", uuid, server, port, name:decodeURIComponent(name), path:sp.get("path")||"/", tls:sp.get("security")==="tls", host:sp.get("host")};
+    } else if(url.startsWith("vmess://")){
+      const j=JSON.parse(atob(url.replace("vmess://","")));
+      return {type:"vmess", uuid:j.id, server:j.add, port:j.port, host:j.host, path:j.path||"/", tls:j.tls==="tls", name:j.ps};
+    } else if(url.startsWith("trojan://")){
+      const [_,rest]=url.split("trojan://");
+      const [pass, after]=rest.split("@");
+      const [server, tail]=after.split(":");
+      const [port, paramsAndName]=tail.split("?");
+      const [params, name]=paramsAndName.split("#");
+      const sp=new URLSearchParams(params);
+      return {type:"trojan", password:pass, server, port, name:decodeURIComponent(name), host:sp.get("host"), path:sp.get("path")||"/"};
+    } else return null;
+  }catch(e){ return null; }
+}
+
+// --- Clash generator ---
+function toClash(d){
+  return `- name: ${d.name}
+  server: ${d.server}
+  port: ${d.port}
+  type: ${d.type}
+  uuid: ${d.uuid||""}
+  password: ${d.password||""}
+  tls: ${d.tls?"true":"false"}
+  skip-cert-verify: true
+  servername: ${d.host||""}
+  network: ws
+  ws-opts:
+    path: ${d.path||"/"}
+    headers:
+      Host: ${d.host||""}
+  udp: true`;
+}
+
+// --- Convert multiple ---
+function convert(){
+  const raw = document.getElementById("input").value.trim();
+  if(!raw){ alert("Input kosong!"); return; }
+  const lines = raw.split(/\r?\n/).filter(l=>l.trim()!=="");
+  let output="proxies:\n";
+  for(let line of lines){
+    const parsed = parseV2Ray(line.trim());
+    if(parsed){ output+=toClash(parsed)+"\n"; }
+    else { output+="# ERROR: Format tidak valid: "+line+"\n"; }
+  }
+  document.getElementById("output").value=output;
+  autoResize(document.getElementById("output"));
+}
+
+// Copy
+function copyOutput(){
+  const out=document.getElementById("output").value;
+  if(!out){ alert("Output kosong!"); return; }
+  navigator.clipboard.writeText(out).then(()=>alert("Tersalin!"));
+}
+
+// Download
+function downloadOutput(){
+  const out=document.getElementById("output").value;
+  if(!out){ alert("Output kosong!"); return; }
+  const blob = new Blob([out], {type:"text/plain"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download="clash.yaml";
+  a.click();
+}
+</script>
+
+</body>
+</html>
